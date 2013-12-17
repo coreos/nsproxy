@@ -65,9 +65,16 @@ func (b *backends) Update(node *etcd.Node, action string) {
 
 	addr := net.JoinHostPort(s.Host, strconv.Itoa(s.Port))
 
+
+	// TODO: create an actual set data structure
+	for _, v := range(b.hosts) {
+		if v.key == node.Key {
+			b.Dump(action)
+			return
+		}
+	}
+
 	b.hosts = append(b.hosts, host{addr: addr, key: node.Key})
-	
-	b.Dump(action)
 }
 
 func (b *backends) Watch(client *etcd.Client) {
