@@ -9,7 +9,7 @@ import (
 
 	"github.com/codegangsta/cli"
 	"github.com/coreos/go-etcd/etcd"
-	nameNet "github.com/philips/go-namespace/net"
+	nameNet "github.com/coreos/go-namespaces/net"
 )
 
 func proxyConn(conn *net.Conn, addr string) {

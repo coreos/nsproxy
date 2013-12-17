@@ -15,38 +15,56 @@ type service struct {
 	Port int `json:"port"`
 }
 
+type host struct {
+	key string
+	addr string
+}
+
 type backends struct {
 	path       string
-	hosts      map[string]string
+	hosts      []host
 	lastIndex  int
 	watchIndex uint64
 	lock       sync.RWMutex
 }
 
 func (b *backends) Dump() {
-	for h, k := range(b.hosts) {
-		log.Printf("%s -> %s", h, k)
+	for _, v := range(b.hosts) {
+		log.Printf("%s -> %s", v.key, v.addr)
 	}
+}
+
+func (b *backends) Remove(key string) {
+	match := -1
+	for k, v := range(b.hosts) {
+		if v.key == key {
+			match = k
+		}
+	}
+
+	b.hosts = append(b.hosts[:match], b.hosts[match+1:]...)
 }
 
 func (b *backends) Update(node *etcd.Node, action string) {
 	b.lock.Lock()
 	defer b.lock.Unlock()
 
+	log.Printf("key: %s action: %s value: %s", node.Key, action, string(node.Value))
+
 	s := &service{}
+	if action == "delete" {
+		b.Remove(node.Key)
+		return
+	}
+
 	err := json.Unmarshal([]byte(node.Value), s)
 	if err != nil {
 		panic(err)
 	}
 
-	host := net.JoinHostPort(s.Host, strconv.Itoa(s.Port))
+	addr := net.JoinHostPort(s.Host, strconv.Itoa(s.Port))
 
-	if action == "delete" {
-		delete(b.hosts, host)
-		return
-	}
-
-	b.hosts[host] = node.Key
+	b.hosts = append(b.hosts, host{addr: addr, key: node.Key})
 
 	b.Dump()
 }
@@ -62,7 +80,6 @@ func (b *backends) Watch(client *etcd.Client) {
 }
 
 func (b *backends) Sync(client *etcd.Client) error {
-	b.hosts = make(map[string]string)
 	resp, err := client.Get(b.path, false, true)
 
 	if err != nil {
@@ -90,9 +107,5 @@ func (b *backends) Next() string {
 	index := (b.lastIndex + 1) % len(b.hosts)
 	b.lastIndex = index
 
-	for k, _ := range(b.hosts) {
-		return k
-	}
-
-	return ""
+	return b.hosts[index].addr
 }
