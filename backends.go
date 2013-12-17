@@ -28,9 +28,9 @@ type backends struct {
 	lock       sync.RWMutex
 }
 
-func (b *backends) Dump() {
+func (b *backends) Dump(action string ) {
 	for _, v := range(b.hosts) {
-		log.Printf("%s -> %s", v.key, v.addr)
+		log.Printf("Dump after %s %s -> %s", action, v.key, v.addr)
 	}
 }
 
@@ -43,6 +43,7 @@ func (b *backends) Remove(key string) {
 	}
 
 	b.hosts = append(b.hosts[:match], b.hosts[match+1:]...)
+	b.Dump("remove")
 }
 
 func (b *backends) Update(node *etcd.Node, action string) {
@@ -52,7 +53,7 @@ func (b *backends) Update(node *etcd.Node, action string) {
 	log.Printf("key: %s action: %s value: %s", node.Key, action, string(node.Value))
 
 	s := &service{}
-	if action == "delete" {
+	if action == "delete" || action == "expire" {
 		b.Remove(node.Key)
 		return
 	}
@@ -65,8 +66,8 @@ func (b *backends) Update(node *etcd.Node, action string) {
 	addr := net.JoinHostPort(s.Host, strconv.Itoa(s.Port))
 
 	b.hosts = append(b.hosts, host{addr: addr, key: node.Key})
-
-	b.Dump()
+	
+	b.Dump(action)
 }
 
 func (b *backends) Watch(client *etcd.Client) {
