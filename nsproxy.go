@@ -81,10 +81,10 @@ func main() {
 	app.Name = "nsproxy"
 	app.Usage = "Proxy into a network namespace"
 	app.Flags = []cli.Flag{
-		cli.IntFlag{"target, t", 0, "target namespace pid"},
-		cli.StringFlag{"path, p", "", "path to a dir"},
-		cli.StringFlag{"addr, a", "127.0.0.1:8080", "target address inside the namespace"},
-		cli.StringFlag{"peers, C", "http://127.0.0.1:4001", "a comma seperated list of machine addresses in the cluster"},
+		cli.IntFlag{"target, t", 0, "target namespace pid", false},
+		cli.StringFlag{"path, p", "", "path to a dir", false},
+		cli.StringFlag{"addr, a", "127.0.0.1:8080", "target address inside the namespace", false},
+		cli.StringFlag{"peers, C", "http://127.0.0.1:4001", "a comma seperated list of machine addresses in the cluster", false},
 	}
 	app.Action = proxy
 	app.Run(os.Args)
