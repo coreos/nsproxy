@@ -16,10 +16,10 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-// This program builds a project and is a copy of path.go. See
-// github.com/philips/path.go
+// This program builds a project and is a copy of third_party.go. See
+// github.com/philips/third_party.go
 //
-// $ go run path.go
+// $ go run third_party.go
 //
 // See the README file for more details.
 package main
@@ -64,12 +64,10 @@ func binDir() string {
 	return path.Join(root, "bin")
 }
 
-// runEnv execs a command like a shell script piping everything to the parent's
+// run execs a command like a shell script piping everything to the parent's
 // stderr/stdout and uses the given environment.
-func runEnv(env []string, name string, arg ...string) {
+func run(name string, arg ...string) *os.ProcessState {
 	cmd := exec.Command(name, arg...)
-
-	cmd.Env = env
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -89,16 +87,8 @@ func runEnv(env []string, name string, arg ...string) {
 	go io.Copy(os.Stdout, stdout)
 	go io.Copy(os.Stderr, stderr)
 	cmd.Wait()
-}
 
-// run calls runEnv with the GOPATH third_party packages.
-func run(name string, arg ...string) {
-	env := append(os.Environ(),
-		"GOPATH="+thirdPartyDir(),
-		"GOBIN="+binDir(),
-	)
-
-	runEnv(env, name, arg...)
+	return cmd.ProcessState
 }
 
 // setupProject does the initial setup of the third_party src directory
@@ -125,35 +115,94 @@ func setupProject(pkg string) {
 	}
 }
 
+func getVc(root string) versionControl {
+	for _, v := range []string{".git", ".hg"} {
+		r := path.Join(root, v)
+		info, err := os.Stat(r)
+
+		if err != nil || !info.IsDir() {
+			continue
+		}
+
+		base := path.Base(r)
+		switch base {
+		case ".git":
+			return vcGit(r)
+		case ".hg":
+			return vcHg(r)
+		}
+	}
+	return new(vcNoop)
+}
+
+type versionControl interface {
+	commit() string
+	update(string) error
+}
+
+//  Performs noops on all VC operations.
+type vcNoop struct{}
+
+func (v *vcNoop) commit() string {
+	return ""
+}
+
+func (v *vcNoop) update(dir string) error {
+	return nil
+}
+
+type vcHg string
+
+// vcHg.commit returns the current HEAD commit hash for a given hg dir.
+func (v vcHg) commit() string {
+	out, err := exec.Command("hg", "id", "-i", "-R", string(v)).Output()
+	if err != nil {
+		return ""
+	}
+	return string(out)
+}
+
+// vcHg.udpate updates the given hg dir to ref.
+func (v vcHg) update(ref string) error {
+	_, err := exec.Command("hg",
+		"update",
+		"-r", ref,
+		"-R", string(v),
+		"--cwd", path.Dir(string(v)),
+	).Output()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+type vcGit string
+
+// vcGit.commit returns the current HEAD commit hash for a given git dir.
+func (v vcGit) commit() string {
+	out, err := exec.Command("git", "--git-dir="+string(v), "rev-parse", "HEAD").Output()
+	if err != nil {
+		return ""
+	}
+	return string(out)
+}
+
+// vcHg.udpate updates the given git dir to ref.
+func (v vcGit) update(ref string) error {
+	_, err := exec.Command("git",
+		"--work-tree="+path.Dir(string(v)),
+		"--git-dir="+string(v),
+		"reset", "--hard", ref,
+	).Output()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 // commit grabs the commit id from hg or git as a string.
 func commit(dir string) string {
-	base := path.Base(dir)
-	switch base {
-	case ".git":
-		return commitGit(dir)
-	case ".hg":
-		return commitHg(dir)
-	default:
-		return ""
-	}
-}
-
-// commitGit returns the current HEAD commit hash for a given git dir.
-func commitGit(dir string) string {
-	out, err := exec.Command("git", "--git-dir="+dir, "rev-parse", "HEAD").Output()
-	if err != nil {
-		return ""
-	}
-	return string(out)
-}
-
-// commitHg returns the current HEAD commit hash for a given git dir.
-func commitHg(dir string) string {
-	out, err := exec.Command("hg", "id", "-i", "-R", dir).Output()
-	if err != nil {
-		return ""
-	}
-	return string(out)
+	return getVc(dir).commit()
 }
 
 // removeVcs removes a .git or .hg directory from the given root if it exists.
@@ -172,7 +221,7 @@ func removeVcs(root string) (bool, string) {
 		}
 
 		// We found it, grab the commit and remove the directory
-		c := commit(r)
+		c := commit(root)
 		err = os.RemoveAll(r)
 		if err != nil {
 			log.Fatalf("removeVcs: %v", err)
@@ -185,21 +234,28 @@ func removeVcs(root string) (bool, string) {
 
 // bump takes care of grabbing a package, getting the package git hash and
 // removing all of the version control stuff.
-func bump(pkg string) {
+func bump(pkg, version string) {
 	tpd := thirdPartyDir()
 
-	temp, _ := ioutil.TempDir(tpd, "bump")
+	temp, err := ioutil.TempDir(tpd, "bump")
+	if err != nil {
+		log.Fatalf("bump: %v", err)
+	}
 	defer os.RemoveAll(temp)
 
-	env := append(os.Environ(),
-		"GOPATH="+temp,
-	)
-
-	runEnv(env, "go", "get", "-u", "-d", pkg)
+	os.Setenv("GOPATH", temp)
+	run("go", "get", "-u", "-d", pkg)
 
 	for {
 		root := path.Join(temp, "src", pkg) // the temp installation root
 		home := path.Join(tpd, "src", pkg)  // where the package will end up
+
+		if version != "" {
+			err := getVc(root).update(version)
+			if err != nil {
+				log.Fatalf("bump: %v", err)
+			}
+		}
 
 		ok, c := removeVcs(root)
 		if ok {
@@ -237,7 +293,6 @@ func bump(pkg string) {
 // This is used by the bumpAll walk to bump all of the existing packages.
 func validPkg(pkg string) bool {
 	env := append(os.Environ(),
-		"GOPATH="+thirdPartyDir(),
 	)
 	cmd := exec.Command("go", "list", pkg)
 	cmd.Env = env
@@ -276,7 +331,7 @@ func bumpWalk(path string, info os.FileInfo, err error) error {
 		return nil
 	}
 
-	bump(pkg)
+	bump(pkg, "")
 
 	return nil
 }
@@ -291,8 +346,12 @@ func bumpAll() {
 func main() {
 	log.SetFlags(0)
 
+	// third_party manages GOPATH, no one else
+	os.Setenv("GOPATH", thirdPartyDir())
+	os.Setenv("GOBIN", binDir())
+
 	if len(os.Args) <= 1 {
-		log.Fatalf("No commnad")
+		log.Fatalf("No command")
 	}
 
 	cmd := os.Args[1]
@@ -303,7 +362,12 @@ func main() {
 	}
 
 	if cmd == "bump" && len(os.Args) > 2 {
-		bump(os.Args[2])
+		ref := ""
+		if len(os.Args) > 3 {
+			ref = os.Args[3]
+		}
+
+		bump(os.Args[2], ref)
 		return
 	}
 
@@ -312,5 +376,9 @@ func main() {
 		return
 	}
 
-	run("go", os.Args[1:]...)
+	ps := run("go", os.Args[1:]...)
+
+	if ps.Success() == false {
+		os.Exit(1)
+	}
 }
