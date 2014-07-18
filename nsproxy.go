@@ -13,8 +13,8 @@ import (
 	"github.com/coreos/go-namespaces/namespace"
 )
 
-func proxyCopy(src, dst io.Reader, closed chan error) {
-	_, err := io.Copy(src, dst)
+func proxyCopy(dst io.Writer, src io.Reader, closed chan error) {
+	_, err := io.Copy(dst, src)
 	if err != nil {
 		log.Printf("ERROR %v", err)
 	}
@@ -34,13 +34,13 @@ func proxyConn(conn *net.Conn, addr string) {
 	go proxyCopy(*conn, rConn, closed)
 
 	// Wait for one copy to finish
-	_ <- closed
+	<-closed
 
 	// Close the connections
 	if err := rConn.Close(); err != nil {
 		log.Printf("upstream close() failed: %v", err)
 	}
-	if err := conn.Close(); err != nil {
+	if err := (*conn).Close(); err != nil {
 		log.Printf("client close() failed: %v", err)
 	}
 }
